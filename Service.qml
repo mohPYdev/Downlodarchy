@@ -32,10 +32,13 @@ Item {
     // Hot-reloads and plugin swaps can orphan the previous watcher's
     // pipeline (inotifywait + loop subshell survive their killed parent).
     // Clear any stale instances before starting ours; dedupe covers any
-    // brief overlap.
+    // brief overlap. Patterns use [b]racket breaks so the killer's own
+    // command line (which contains the literal pattern text) can't match.
+    var brokenPath = root.scriptPath("watch.sh").replace("watch.sh", "watc[h].sh")
+    var brokenEvents = "close_write,moved_t[o]"
     staleKillProc.command = ["bash", "-c",
-      "pkill -f \"" + root.scriptPath("watch.sh") + "\"; " +
-      "pkill -f \"inotifywait.*close_write,moved_to.*" + root.downloadsDir + "\"",
+      "pkill -f \"" + brokenPath + "\"; " +
+      "pkill -f \"inotifywait.*" + brokenEvents + ".*" + root.downloadsDir + "\"",
       "pkill"]
     staleKillProc.running = true
   }
