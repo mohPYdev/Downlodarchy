@@ -29,7 +29,15 @@ Item {
   Component.onCompleted: {
     dirsProc.command = ["mkdir", "-p", root.configDir, root.downloadsDir]
     dirsProc.running = true
-    startWatcher()
+    // Hot-reloads and plugin swaps can orphan the previous watcher's
+    // pipeline (inotifywait + loop subshell survive their killed parent).
+    // Clear any stale instances before starting ours; dedupe covers any
+    // brief overlap.
+    staleKillProc.command = ["bash", "-c",
+      "pkill -f \"" + root.scriptPath("watch.sh") + "\"; " +
+      "pkill -f \"inotifywait.*close_write,moved_to.*" + root.downloadsDir + "\"",
+      "pkill"]
+    staleKillProc.running = true
   }
 
   function defaultCategoryName() {
@@ -121,7 +129,19 @@ Item {
     onTriggered: root.startWatcher()
   }
 
+  Timer {
+    id: watcherStartTimer
+    interval: 400
+    onTriggered: root.startWatcher()
+  }
+
   Process { id: dirsProc }
+
+  // pkill exits non-zero when nothing matched; that's fine.
+  Process {
+    id: staleKillProc
+    onExited: watcherStartTimer.restart()
+  }
 
   Process {
     id: watcherProc
