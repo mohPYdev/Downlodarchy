@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "mohpydev.downlodarchy",
+  "name": "Downlodarchy",
+  "version": "1.0.0",
+  "author": "mohpydev",
+  "description": "Sort new downloads into category folders and open categories from the bar",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Downloads",
+    "description": "Download organizer: sort new files into categories, open category folders",
+    "category": "System",
+    "defaultSection": "right"
+  }
+}
