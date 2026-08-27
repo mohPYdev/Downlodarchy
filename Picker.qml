@@ -209,6 +209,7 @@ Item {
             Text {
               width: parent.width
               text: root.fileName
+              textFormat: Text.PlainText
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.heading
@@ -221,6 +222,7 @@ Item {
               text: root.cursorIndex < root.shownCategories.length
                 ? "→ ~/Downloads/" + root.categoryNameAt(root.cursorIndex)
                 : "→ new category"
+              textFormat: Text.PlainText
               color: root.foreground
               opacity: 0.55
               font.family: root.fontFamily
@@ -275,6 +277,7 @@ Item {
                   width: Style.space(22)
                   anchors.verticalCenter: parent.verticalCenter
                   text: rowDelegate.isCreate ? "\uf055" : Config.sanitizeIcon(rowDelegate.cat.icon)
+                  textFormat: Text.PlainText
                   color: rowDelegate.isCreate ? Color.accent : root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
@@ -286,6 +289,7 @@ Item {
                   text: rowDelegate.isCreate
                     ? "Create \u201C" + Config.normalizeName(root.filterText) + "\u201D"
                     : rowDelegate.cat.name
+                  textFormat: Text.PlainText
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
@@ -323,6 +327,7 @@ Item {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             text: "↵ sort · esc " + (root.service ? root.service.defaultCategoryName() : "default") + " · type to search or create"
+            textFormat: Text.PlainText
             color: root.foreground
             opacity: 0.45
             font.family: root.fontFamily

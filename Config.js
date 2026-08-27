@@ -24,10 +24,19 @@ function defaultConfig() {
   }
 }
 
-// Strip path separators and collapse whitespace so a typed category can
-// never escape ~/Downloads.
+// Strip path separators, traversal, and whitespace so a typed category can
+// never escape ~/Downloads. Rejects any value containing path separators,
+// dot or dot-dot, or empty results.
 function normalizeName(name) {
-  var n = String(name || "").replace(/[\/\\]/g, " ").replace(/\s+/g, " ").trim()
+  var n = String(name || "").trim()
+  if (!n) return ""
+  // Strip path separators and traversal components.
+  n = n.replace(/[\/\\]/g, " ")
+  n = n.replace(/\.\./g, " ")
+  n = n.replace(/\b\.\b/g, " ")
+  n = n.replace(/\s+/g, " ").trim()
+  // Final guard: empty or pure-separator residue.
+  if (!n || /^[.\s]+$/.test(n)) return ""
   return n
 }
 

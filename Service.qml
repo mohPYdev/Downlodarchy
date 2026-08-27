@@ -68,7 +68,17 @@ Item {
     root.enqueue(p)
   }
 
+  // Reject paths outside ~/Downloads, nested subdirs, or traversal.
+  function validPath(path) {
+    var p = String(path || "").trim()
+    if (!p || p.indexOf(root.downloadsDir + "/") !== 0) return false
+    var rel = p.slice(root.downloadsDir.length + 1)
+    // Direct child only — no subdirectories or traversal.
+    return rel !== "" && rel.indexOf("/") === -1 && rel !== "." && rel !== ".."
+  }
+
   function enqueue(path) {
+    if (!root.validPath(path)) return
     var next = root.queue.slice()
     for (var i = 0; i < next.length; i++)
       if (next[i] === path) return
@@ -226,6 +236,7 @@ Item {
     target: "mohpydev.downlodarchy"
 
     // Open the category box for one specific file right now.
+    // Rejects paths outside ~/Downloads or nested in subdirectories.
     function pick(path: string) {
       root.enqueue(path)
     }
