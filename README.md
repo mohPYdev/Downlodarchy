@@ -9,6 +9,8 @@ messy Downloads folder.
 This is a simple download manager that helps users organize their downloaded
 files into categories that can be accessed and edited later.
 
+![Downlodarchy](preview.png)
+
 ## Features
 
 - **Category box on every download** — themed floating card with keyboard
