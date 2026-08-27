@@ -65,7 +65,8 @@ function parseConfig(raw) {
   if (Array.isArray(parsed.categories)) {
     var seen = {}
     var cats = []
-    for (var i = 0; i < parsed.categories.length; i++) {
+    var maxCats = 50
+    for (var i = 0; i < parsed.categories.length && cats.length < maxCats; i++) {
       var entry = parsed.categories[i]
       var name = normalizeName(entry && typeof entry === "object" ? entry.name : entry)
       if (!name || seen[name.toLowerCase()]) continue

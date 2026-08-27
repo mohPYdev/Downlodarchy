@@ -26,21 +26,25 @@ Item {
   property var recentPaths: ({})
   property string currentFile: ""
 
+  // Hard limits to prevent resource exhaustion.
+  readonly property int maxQueueSize: 50
+  readonly property int maxMoveQueueSize: 20
+  readonly property int maxOrganizeEntries: 100
+  readonly property int maxConfigCategories: 50
+  readonly property int maxStdioBytes: 524288  // 512 KB
+
+  readonly property string watcherPidFile: (Qt.getenv("XDG_RUNTIME_DIR") || homeDir + "/.cache") + "/downlodarchy-watcher.pid"
+
   Component.onCompleted: {
     dirsProc.command = ["mkdir", "-p", root.configDir, root.downloadsDir]
     dirsProc.running = true
-    // Hot-reloads and plugin swaps can orphan the previous watcher's
-    // pipeline (inotifywait + loop subshell survive their killed parent).
-    // Clear any stale instances before starting ours; dedupe covers any
-    // brief overlap. Patterns use [b]racket breaks so the killer's own
-    // command line (which contains the literal pattern text) can't match.
-    var brokenPath = root.scriptPath("watch.sh").replace("watch.sh", "watc[h].sh")
-    var brokenEvents = "close_write,moved_t[o]"
-    staleKillProc.command = ["bash", "-c",
-      "pkill -f \"" + brokenPath + "\"; " +
-      "pkill -f \"inotifywait.*" + brokenEvents + ".*" + root.downloadsDir + "\"",
-      "pkill"]
-    staleKillProc.running = true
+    // Kill any stale watcher from a previous service instance using the
+    // PID file it left behind. Reads individual PIDs and sends SIGTERM
+    // via separate `kill` invocations — no shell metacharacter risk.
+    cleanupProc.command = ["bash", "-c",
+      "[ -f \"$1\" ] && while IFS= read -r pid; do kill \"$pid\" 2>/dev/null; done < \"$1\"; rm -f \"$1\"",
+      "cleanup", root.watcherPidFile]
+    cleanupProc.running = true
   }
 
   function defaultCategoryName() {
@@ -79,6 +83,7 @@ Item {
 
   function enqueue(path) {
     if (!root.validPath(path)) return
+    if (root.queue.length >= root.maxQueueSize) return
     var next = root.queue.slice()
     for (var i = 0; i < next.length; i++)
       if (next[i] === path) return
@@ -104,6 +109,7 @@ Item {
   function sortFile(file, category) {
     var name = Config.normalizeName(category)
     if (!name) name = root.defaultCategoryName()
+    if (root.moveQueue.length >= root.maxMoveQueueSize) return
     var next = root.moveQueue.slice()
     for (var i = 0; i < next.length; i++)
       if (next[i].file === file && next[i].category === name) return
@@ -150,9 +156,9 @@ Item {
 
   Process { id: dirsProc }
 
-  // pkill exits non-zero when nothing matched; that's fine.
+  // Reads the PID file and kills stale watchers individually.
   Process {
-    id: staleKillProc
+    id: cleanupProc
     onExited: watcherStartTimer.restart()
   }
 
@@ -204,6 +210,7 @@ Item {
     var clean = Config.normalizeName(name)
     if (!clean) return false
     if (Config.findCategory(root.config, clean)) return false
+    if (root.config.categories.length >= root.maxConfigCategories) return false
     var next = root.config.categories.concat([{ name: clean, icon: Config.sanitizeIcon(icon, "\uf016") }])
     root.config = Object.assign({}, root.config, { categories: next })
     root.saveConfig()
@@ -241,11 +248,12 @@ Item {
       root.enqueue(path)
     }
 
-    // Queue every stray file still sitting in the Downloads root.
+    // Queue stray files sitting in the Downloads root, capped to prevent
+    // resource exhaustion from a large or attacker-populated directory.
     function organize() {
       sweepProc.command = [
         "bash", "-c",
-        "find \"$1\" -maxdepth 1 -type f -not -name \".*\" ! -name \"*.part\" ! -name \"*.crdownload\" ! -name \"*.tmp\" -print | sort",
+        "find \"$1\" -maxdepth 1 -type f -not -name \".*\" ! -name \"*.part\" ! -name \"*.crdownload\" ! -name \"*.tmp\" -print | head -" + root.maxOrganizeEntries + " | sort",
         "find", root.downloadsDir
       ]
       sweepProc.running = true
@@ -261,11 +269,16 @@ Item {
     id: sweepProc
     stdout: StdioCollector {
       waitForEnd: true
+      maxBytes: root.maxStdioBytes
       onStreamFinished: {
         var lines = text.split("\n")
-        for (var i = 0; i < lines.length; i++) {
+        var count = 0
+        for (var i = 0; i < lines.length && count < root.maxOrganizeEntries; i++) {
           var p = lines[i].trim()
-          if (p) root.enqueue(p)
+          if (p) {
+            root.enqueue(p)
+            count++
+          }
         }
       }
     }

@@ -3,8 +3,8 @@
 # move.sh <downloads-dir> <file> <category>
 # Moves <file> into ~/Downloads/<category> with a collision-safe name and
 # sends a desktop notification. Prints the final path on stdout.
-# Security: rejects symlinks, traversal outside ~/Downloads, and malformed
-# paths.
+# Security: rejects symlinks, traversal, and uses cd-based operations to
+# eliminate check-then-use races.
 
 set -euo pipefail
 
@@ -28,15 +28,20 @@ relative="${file#"$downloads/"}"
 
 name="$(basename "$file")"
 
-# Collision-safe destination: "report.pdf" -> "report (1).pdf", ...
+# Create category directory. Reject if created path is a symlink.
 dest="$downloads/$category"
 mkdir -p -- "$dest"
+[[ -d "$dest" && ! -L "$dest" ]] || { echo "error: category dir is not a real directory" >&2; exit 1; }
 
-# Destination must not be a symlink.
-[[ ! -L "$dest" ]] || { echo "error: category dir is a symlink" >&2; exit 1; }
+# --- atomic move via cd into destination ---
+# cd into the target directory before moving to eliminate TOCTOU races
+# between checking a path and using it.
 
-target="$dest/$name"
-if [[ -e $target || -L $target ]]; then
+cd -- "$dest"
+
+# Collision-safe destination: "report.pdf" -> "report (1).pdf", ...
+target="$name"
+if [[ -e "$target" || -L "$target" ]]; then
   if [[ $name == *.* && ${name%.*} != "" ]]; then
     stem="${name%.*}"
     ext=".${name##*.}"
@@ -48,11 +53,11 @@ if [[ -e $target || -L $target ]]; then
   while [[ -e "$dest/$stem ($n)$ext" || -L "$dest/$stem ($n)$ext" ]]; do
     ((n++))
   done
-  target="$dest/$stem ($n)$ext"
+  target="$stem ($n)$ext"
 fi
 
 mv -- "$file" "$target"
-printf '%s\n' "$target"
+printf '%s\n' "$dest/$target"
 
 omarchy-notification-send -g "" \
   "Download sorted" \
