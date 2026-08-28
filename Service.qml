@@ -4,6 +4,7 @@ import Quickshell.Io
 import qs.Commons
 import "Config.js" as Config
 import "Classifier.js" as Classifier
+import "Lifecycle.js" as Lifecycle
 
 // Downlodarchy service: watches ~/Downloads for completed files, asks which
 // category folder each belongs in (Picker overlay below), and moves it there.
@@ -21,9 +22,11 @@ Item {
   readonly property string configDir: homeDir + "/.config/downlodarchy"
   readonly property string configPath: configDir + "/config.json"
   readonly property string classifierPath: configDir + "/classifier.json"
+  readonly property string lifecyclePath: configDir + "/lifecycle.json"
 
   property var config: Config.defaultConfig()
   property var classifierModel: Classifier.emptyModel()
+  property var lifecycleModel: Lifecycle.emptyModel()
   property var queue: []
   property var moveQueue: []
   property var recentPaths: ({})
@@ -57,6 +60,8 @@ Item {
       "fi",
       "cleanup", root.watcherPidFile]
     cleanupProc.running = true
+    // Initial lifecycle scan after startup.
+    lifecycleStartupTimer.restart()
   }
 
   function defaultCategoryName() {
@@ -182,6 +187,20 @@ Item {
     onTriggered: root.startWatcher()
   }
 
+  Timer {
+    id: lifecycleTimer
+    interval: (root.config.lifecycle ? root.config.lifecycle.scanIntervalMinutes : 60) * 60 * 1000
+    running: root.config.lifecycle && root.config.lifecycle.enabled
+    repeat: true
+    onTriggered: root.scanLifecycle()
+  }
+
+  Timer {
+    id: lifecycleStartupTimer
+    interval: 2000
+    onTriggered: root.scanLifecycle()
+  }
+
   Process { id: dirsProc }
 
   // Reads the PID file and kills stale watchers individually.
@@ -214,6 +233,57 @@ Item {
     }
   }
 
+  Process {
+    id: lifecycleScanProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      maxBytes: root.maxStdioBytes
+      onStreamFinished: {
+        try {
+          var result = JSON.parse(text)
+          if (result.files) {
+            for (var i = 0; i < result.files.length; i++) {
+              var f = result.files[i]
+              root.lifecycleModel = Lifecycle.recordFile(root.lifecycleModel, f.path, f.category, {
+                lastModified: f.lastModified,
+                lastAccessed: f.lastAccessed,
+                size: f.size
+              })
+            }
+            lifecycleFile.setText(Lifecycle.modelToJSON(root.lifecycleModel))
+          }
+        } catch (e) {}
+      }
+    }
+  }
+
+  Process {
+    id: lifecycleActionProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      maxBytes: root.maxStdioBytes
+      onStreamFinished: {
+        try {
+          var result = JSON.parse(text)
+          if (result.archived) {
+            Quickshell.execDetached([
+              root.omarchyPath + "/bin/omarchy-notification-send",
+              "-u", "normal", "Downlodarchy",
+              "Archived " + result.archived + " file(s) from lifecycle scan"
+            ])
+          }
+          if (result.deleted) {
+            Quickshell.execDetached([
+              root.omarchyPath + "/bin/omarchy-notification-send",
+              "-u", "normal", "Downlodarchy",
+              "Deleted " + result.deleted + " old file(s)"
+            ])
+          }
+        } catch (e) {}
+      }
+    }
+  }
+
   // --------------------------------------------------------------- config
 
   FileView {
@@ -240,6 +310,20 @@ Item {
     onLoadFailed: {
       root.classifierModel = Classifier.emptyModel()
       classifierFile.setText(Classifier.modelToJSON(root.classifierModel))
+    }
+    onFileChanged: reload()
+  }
+
+  FileView {
+    id: lifecycleFile
+    path: root.lifecyclePath
+    watchChanges: true
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.lifecycleModel = Lifecycle.parseModel(text())
+    onLoadFailed: {
+      root.lifecycleModel = Lifecycle.emptyModel()
+      lifecycleFile.setText(Lifecycle.modelToJSON(root.lifecycleModel))
     }
     onFileChanged: reload()
   }
@@ -274,6 +358,52 @@ Item {
   function resetClassifier() {
     root.classifierModel = Classifier.emptyModel()
     classifierFile.setText(Classifier.modelToJSON(root.classifierModel))
+  }
+
+  // ----------------------------------------------------------- lifecycle
+
+  function scanLifecycle() {
+    if (!root.config.lifecycle || !root.config.lifecycle.enabled) return
+    // Scan each category folder for old files.
+    for (var i = 0; i < root.config.categories.length; i++) {
+      var cat = root.config.categories[i].name
+      if (cat === ".archive") continue
+      lifecycleScanProc.command = [
+        "bash", root.scriptPath("lifecycle.sh"),
+        root.downloadsDir, cat, "scan",
+        String(root.config.lifecycle.archiveAfterDays)
+      ]
+      lifecycleScanProc.running = true
+    }
+    // Update last scan time.
+    root.lifecycleModel = Object.assign({}, root.lifecycleModel, { lastScan: Lifecycle.nowISO() })
+    lifecycleFile.setText(Lifecycle.modelToJSON(root.lifecycleModel))
+  }
+
+  function archiveCategory(category) {
+    if (!root.config.lifecycle || !root.config.lifecycle.enabled) return
+    lifecycleActionProc.command = [
+      "bash", root.scriptPath("lifecycle.sh"),
+      root.downloadsDir, category, "archive",
+      String(root.config.lifecycle.archiveAfterDays),
+      root.downloadsDir + "/.archive"
+    ]
+    lifecycleActionProc.running = true
+  }
+
+  function deleteOldFiles(category) {
+    if (!root.config.lifecycle || !root.config.lifecycle.enabled) return
+    if (!root.config.lifecycle.deleteAfterDays || root.config.lifecycle.deleteAfterDays <= 0) return
+    lifecycleActionProc.command = [
+      "bash", root.scriptPath("lifecycle.sh"),
+      root.downloadsDir, category, "delete",
+      String(root.config.lifecycle.deleteAfterDays)
+    ]
+    lifecycleActionProc.running = true
+  }
+
+  function lifecycleStats() {
+    return Lifecycle.lifecycleStats(root.lifecycleModel, root.config.lifecycle)
   }
 
   function addCategory(name, icon) {
@@ -341,6 +471,13 @@ Item {
           confidenceThreshold: root.config.classifier.confidenceThreshold,
           totalDecisions: Classifier.totalDecisions(root.classifierModel),
           topCategory: Classifier.topCategory(root.classifierModel)
+        },
+        lifecycle: {
+          enabled: root.config.lifecycle.enabled,
+          archiveAfterDays: root.config.lifecycle.archiveAfterDays,
+          deleteAfterDays: root.config.lifecycle.deleteAfterDays,
+          scanIntervalMinutes: root.config.lifecycle.scanIntervalMinutes,
+          lastScan: root.lifecycleModel.lastScan
         }
       })
     }
@@ -357,6 +494,26 @@ Item {
         topCategory: Classifier.topCategory(root.classifierModel),
         extensionStats: Classifier.extensionStats(root.classifierModel)
       })
+    }
+
+    // Trigger a lifecycle scan across all categories.
+    function scanLifecycle() {
+      root.scanLifecycle()
+    }
+
+    // Archive old files in a specific category.
+    function archiveCategory(category: string) {
+      root.archiveCategory(category)
+    }
+
+    // Delete old files in a specific category (if configured).
+    function deleteOldFiles(category: string) {
+      root.deleteOldFiles(category)
+    }
+
+    // Report lifecycle statistics.
+    function lifecycleStats(): string {
+      return JSON.stringify(root.lifecycleStats())
     }
   }
 
