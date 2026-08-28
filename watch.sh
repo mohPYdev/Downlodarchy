@@ -5,6 +5,10 @@
 # close_write (last write handle closed) and moved_to (rename into place,
 # how browsers finalize .part files) are reported, so files are complete
 # when seen.
+#
+# Security: runs under setsid so all pipeline members share one process
+# group that can be killed atomically. PID file is created securely via
+# mktemp + atomic rename (no symlink-following truncating redirect).
 
 set -euo pipefail
 
@@ -16,21 +20,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Write our PID (and the inotifywait child's) so a new service instance
-# can kill us cleanly instead of using broad pattern matching.
+# --- Secure PID file creation (no symlink-following truncation) ---
+tmpfile=$(mktemp "${pidfile}.XXXXXX" 2>/dev/null) || tmpfile=""
+if [ -n "$tmpfile" ]; then
+  printf '%s\n' "$$" > "$tmpfile"
+  mv -f "$tmpfile" "$pidfile"
+fi
+
 inotifywait -m -q -e close_write,moved_to --format '%w%f' "$dir" |
 while IFS= read -r path; do
-  base="$(basename "$path")"
+  base="${path##*/}"
   case "$base" in
     .*|*.part|*.crdownload|*.partial|*.tmp|*.swp|*.kate-swap|*.!ut) continue ;;
   esac
   [ -f "$path" ] || continue
   printf '%s\n' "$path"
-done &
-child=$!
-
-# Write our own PID and the inotifywait PID.
-printf '%s\n%s\n' "$$" "$child" > "$pidfile"
-
-# Wait for the pipeline; trap EXIT cleans the pidfile.
-wait "$child" 2>/dev/null || true
+done

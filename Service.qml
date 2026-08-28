@@ -39,10 +39,19 @@ Item {
     dirsProc.command = ["mkdir", "-p", root.configDir, root.downloadsDir]
     dirsProc.running = true
     // Kill any stale watcher from a previous service instance using the
-    // PID file it left behind. Reads individual PIDs and sends SIGTERM
-    // via separate `kill` invocations — no shell metacharacter risk.
+    // PID file it left behind. Validates each PID via /proc/<pid>/cmdline
+    // to ensure it belongs to this plugin's watcher before signaling.
+    // Uses kill -- -$pid to terminate the entire process group atomically.
     cleanupProc.command = ["bash", "-c",
-      "[ -f \"$1\" ] && while IFS= read -r pid; do kill \"$pid\" 2>/dev/null; done < \"$1\"; rm -f \"$1\"",
+      "if [ -f \"$1\" ]; then " +
+      "  while IFS= read -r pid; do " +
+      "    pid=${pid%%[^0-9]*}; " +
+      "    [ -d \"/proc/$pid\" ] || continue; " +
+      "    cmd=$(tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null) || continue; " +
+      "    case \"$cmd\" in *downlodarchy*watch*) kill -- -\"$pid\" 2>/dev/null ;; esac; " +
+      "  done < \"$1\"; " +
+      "  rm -f \"$1\"; " +
+      "fi",
       "cleanup", root.watcherPidFile]
     cleanupProc.running = true
   }
@@ -59,7 +68,9 @@ Item {
 
   function startWatcher() {
     if (watcherProc.running) return
-    watcherProc.command = ["bash", root.scriptPath("watch.sh"), root.downloadsDir]
+    // setsid creates a new session + process group so all pipeline
+    // members share one PGID that can be killed atomically.
+    watcherProc.command = ["setsid", "bash", root.scriptPath("watch.sh"), root.downloadsDir]
     watcherProc.running = true
   }
 

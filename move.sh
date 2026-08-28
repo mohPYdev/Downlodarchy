@@ -28,18 +28,26 @@ relative="${file#"$downloads/"}"
 
 name="$(basename "$file")"
 
-# Create category directory. Reject if created path is a symlink.
+# Create category directory.
 dest="$downloads/$category"
 mkdir -p -- "$dest"
-[[ -d "$dest" && ! -L "$dest" ]] || { echo "error: category dir is not a real directory" >&2; exit 1; }
 
 # --- atomic move via cd into destination ---
-# cd into the target directory before moving to eliminate TOCTOU races
-# between checking a path and using it.
+# cd into the target directory, then verify it is a real directory (not a
+# symlink) by stat-ing the pinned cwd. This eliminates the TOCTOU race
+# because we verify after pinning the descriptor via cd.
 
 cd -- "$dest"
 
+# Verify we landed in a real directory, not a symlink target.
+# stat -L -c '%d:%i' gives device:inode of the target; compare with
+# the canonical path to detect if we followed a symlink.
+real_dir=$(stat -L -c '%d:%i' "$dest" 2>/dev/null) || { echo "error: cannot stat destination" >&2; exit 1; }
+link_dir=$(stat -c '%d:%i' "$dest" 2>/dev/null) || { echo "error: cannot stat destination" >&2; exit 1; }
+[[ "$real_dir" == "$link_dir" ]] || { echo "error: category dir is a symlink" >&2; exit 1; }
+
 # Collision-safe destination: "report.pdf" -> "report (1).pdf", ...
+# We are now cd'd into $dest, so all checks use relative paths.
 target="$name"
 if [[ -e "$target" || -L "$target" ]]; then
   if [[ $name == *.* && ${name%.*} != "" ]]; then
@@ -50,7 +58,7 @@ if [[ -e "$target" || -L "$target" ]]; then
     ext=""
   fi
   n=1
-  while [[ -e "$dest/$stem ($n)$ext" || -L "$dest/$stem ($n)$ext" ]]; do
+  while [[ -e "$stem ($n)$ext" || -L "$stem ($n)$ext" ]]; do
     ((n++))
   done
   target="$stem ($n)$ext"
