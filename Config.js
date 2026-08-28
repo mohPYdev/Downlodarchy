@@ -18,9 +18,20 @@ function defaultCategories() {
 
 function defaultConfig() {
   return {
-    version: 1,
+    version: 2,
     defaultCategory: "Unsorted",
-    categories: defaultCategories()
+    categories: defaultCategories(),
+    classifier: {
+      enabled: true,
+      autoSort: false,
+      confidenceThreshold: 0.75
+    },
+    lifecycle: {
+      enabled: false,
+      archiveAfterDays: 30,
+      deleteAfterDays: 0,
+      scanIntervalMinutes: 60
+    }
   }
 }
 
@@ -80,7 +91,40 @@ function parseConfig(raw) {
   if (def && findCategory({ categories: cfg.categories }, def)) cfg.defaultCategory = def
   else cfg.defaultCategory = cfg.categories[0].name
 
+  // Classifier settings.
+  if (parsed.classifier && typeof parsed.classifier === "object") {
+    cfg.classifier = {
+      enabled: !!parsed.classifier.enabled,
+      autoSort: !!parsed.classifier.autoSort,
+      confidenceThreshold: clampFloat(parsed.classifier.confidenceThreshold, 0.1, 1.0, 0.75)
+    }
+  }
+
+  // Lifecycle settings.
+  if (parsed.lifecycle && typeof parsed.lifecycle === "object") {
+    cfg.lifecycle = {
+      enabled: !!parsed.lifecycle.enabled,
+      archiveAfterDays: clampInt(parsed.lifecycle.archiveAfterDays, 0, 3650, 30),
+      deleteAfterDays: clampInt(parsed.lifecycle.deleteAfterDays, 0, 3650, 0),
+      scanIntervalMinutes: clampInt(parsed.lifecycle.scanIntervalMinutes, 5, 1440, 60)
+    }
+  }
+
   return cfg
+}
+
+// --- Numeric clamping helpers ---
+
+function clampFloat(val, min, max, fallback) {
+  var n = parseFloat(val)
+  if (isNaN(n)) return fallback
+  return Math.max(min, Math.min(max, n))
+}
+
+function clampInt(val, min, max, fallback) {
+  var n = parseInt(val, 10)
+  if (isNaN(n)) return fallback
+  return Math.max(min, Math.min(max, n))
 }
 
 // Filter-as-you-type. Empty filter returns everything in stored order.

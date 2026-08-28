@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import "Config.js" as Config
+import "Classifier.js" as Classifier
 
 // Downlodarchy service: watches ~/Downloads for completed files, asks which
 // category folder each belongs in (Picker overlay below), and moves it there.
@@ -19,8 +20,10 @@ Item {
   readonly property string downloadsDir: homeDir + "/Downloads"
   readonly property string configDir: homeDir + "/.config/downlodarchy"
   readonly property string configPath: configDir + "/config.json"
+  readonly property string classifierPath: configDir + "/classifier.json"
 
   property var config: Config.defaultConfig()
+  property var classifierModel: Classifier.emptyModel()
   property var queue: []
   property var moveQueue: []
   property var recentPaths: ({})
@@ -106,13 +109,27 @@ Item {
   function maybeShowNext() {
     if (picker.opened || root.currentFile !== "" || root.queue.length === 0) return
     var next = root.queue.slice()
-    root.currentFile = next.shift()
+    var file = next.shift()
     root.queue = next
-    picker.openFor(root.currentFile)
+    // Try auto-sort with classifier prediction.
+    if (root.config.classifier && root.config.classifier.autoSort) {
+      var prediction = root.predictCategory(file)
+      if (prediction && prediction.confidence >= root.config.classifier.confidenceThreshold) {
+        root.sortFile(file, prediction.category)
+        root.recordSortDecision(file, prediction.category)
+        root.maybeShowNext()
+        return
+      }
+    }
+    // Pass prediction to picker for pre-selection.
+    root.currentFile = file
+    var prediction = root.predictCategory(file)
+    picker.openFor(file, prediction)
   }
 
   function pickDone(file, category) {
     if (root.currentFile === file) root.currentFile = ""
+    root.recordSortDecision(file, category)
     root.sortFile(file, category)
     root.maybeShowNext()
   }
@@ -213,8 +230,50 @@ Item {
     onFileChanged: reload()
   }
 
+  FileView {
+    id: classifierFile
+    path: root.classifierPath
+    watchChanges: true
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.classifierModel = Classifier.parseModel(text())
+    onLoadFailed: {
+      root.classifierModel = Classifier.emptyModel()
+      classifierFile.setText(Classifier.modelToJSON(root.classifierModel))
+    }
+    onFileChanged: reload()
+  }
+
   function saveConfig() {
     configFile.setText(JSON.stringify(root.config, null, 2) + "\n")
+  }
+
+  // ----------------------------------------------------------- classifier
+
+  function predictCategory(path) {
+    if (!root.config.classifier || !root.config.classifier.enabled) return null
+    var name = String(path || "").split("/").pop() || ""
+    var ext = ""
+    var dotIdx = name.lastIndexOf(".")
+    if (dotIdx > 0) ext = name.slice(dotIdx + 1)
+    var catNames = []
+    for (var i = 0; i < root.config.categories.length; i++)
+      catNames.push(root.config.categories[i].name)
+    return Classifier.predict(root.classifierModel, ext, name, catNames)
+  }
+
+  function recordSortDecision(path, category) {
+    var name = String(path || "").split("/").pop() || ""
+    var ext = ""
+    var dotIdx = name.lastIndexOf(".")
+    if (dotIdx > 0) ext = name.slice(dotIdx + 1)
+    root.classifierModel = Classifier.record(root.classifierModel, ext, name, category)
+    classifierFile.setText(Classifier.modelToJSON(root.classifierModel))
+  }
+
+  function resetClassifier() {
+    root.classifierModel = Classifier.emptyModel()
+    classifierFile.setText(Classifier.modelToJSON(root.classifierModel))
   }
 
   function addCategory(name, icon) {
@@ -272,7 +331,32 @@ Item {
 
     // Report current settings as JSON (handy for scripting/debugging).
     function status(): string {
-      return JSON.stringify({ downloadsDir: root.downloadsDir, defaultCategory: root.defaultCategoryName(), categories: root.config.categories })
+      return JSON.stringify({
+        downloadsDir: root.downloadsDir,
+        defaultCategory: root.defaultCategoryName(),
+        categories: root.config.categories,
+        classifier: {
+          enabled: root.config.classifier.enabled,
+          autoSort: root.config.classifier.autoSort,
+          confidenceThreshold: root.config.classifier.confidenceThreshold,
+          totalDecisions: Classifier.totalDecisions(root.classifierModel),
+          topCategory: Classifier.topCategory(root.classifierModel)
+        }
+      })
+    }
+
+    // Reset the classifier learning data.
+    function resetClassifier() {
+      root.resetClassifier()
+    }
+
+    // Report classifier stats.
+    function classifierStats(): string {
+      return JSON.stringify({
+        totalDecisions: Classifier.totalDecisions(root.classifierModel),
+        topCategory: Classifier.topCategory(root.classifierModel),
+        extensionStats: Classifier.extensionStats(root.classifierModel)
+      })
     }
   }
 

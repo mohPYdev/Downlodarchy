@@ -17,6 +17,7 @@ Item {
   property string filePath: ""
   property string filterText: ""
   property int cursorIndex: 0
+  property var currentPrediction: null
 
   readonly property string fileName: {
     var p = root.filePath
@@ -41,9 +42,10 @@ Item {
   readonly property int rowHeight: Style.space(36)
   readonly property real cardWidth: Style.space(440)
 
-  function openFor(path) {
+  function openFor(path, prediction) {
     root.filePath = String(path || "")
     root.filterText = ""
+    root.currentPrediction = prediction || null
     root.opened = true
     root.resetCursor()
     idleTimer.restart()
@@ -51,10 +53,21 @@ Item {
   }
 
   function resetCursor() {
-    var def = root.service ? root.service.defaultCategoryName() : ""
     var idx = 0
-    for (var i = 0; i < root.shownCategories.length; i++) {
-      if (String(root.shownCategories[i].name).toLowerCase() === def.toLowerCase()) { idx = i; break }
+    // Pre-select predicted category if available.
+    if (root.currentPrediction && root.currentPrediction.category) {
+      var predName = String(root.currentPrediction.category).toLowerCase()
+      for (var i = 0; i < root.shownCategories.length; i++) {
+        if (String(root.shownCategories[i].name).toLowerCase() === predName) {
+          idx = i
+          break
+        }
+      }
+    } else {
+      var def = root.service ? root.service.defaultCategoryName() : ""
+      for (var j = 0; j < root.shownCategories.length; j++) {
+        if (String(root.shownCategories[j].name).toLowerCase() === def.toLowerCase()) { idx = j; break }
+      }
     }
     root.cursorIndex = root.rowCount > 0 ? Math.min(idx, root.rowCount - 1) : 0
     Qt.callLater(function() {
@@ -115,6 +128,7 @@ Item {
     root.opened = false
     root.filePath = ""
     root.filterText = ""
+    root.currentPrediction = null
   }
 
   Timer {
@@ -285,7 +299,7 @@ Item {
 
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
-                  width: parent.width - Style.space(22) - parent.spacing * 2 - defaultBadge.width
+                  width: parent.width - Style.space(22) - parent.spacing * 2 - defaultBadge.width - predictionBadge.width - (predictionBadge.visible ? parent.spacing : 0)
                   text: rowDelegate.isCreate
                     ? "Create \u201C" + Config.normalizeName(root.filterText) + "\u201D"
                     : rowDelegate.cat.name
@@ -312,6 +326,29 @@ Item {
                     anchors.centerIn: parent
                     text: "DEFAULT"
                     color: Color.background
+                    font.family: root.fontFamily
+                    font.pixelSize: Math.max(9, Style.font.caption - 2)
+                    font.bold: true
+                    font.letterSpacing: 0.8
+                  }
+                }
+
+                Rectangle {
+                  id: predictionBadge
+                  anchors.verticalCenter: parent.verticalCenter
+                  visible: !rowDelegate.isCreate && root.currentPrediction
+                    && root.currentPrediction.category
+                    && String(rowDelegate.cat.name).toLowerCase() === String(root.currentPrediction.category).toLowerCase()
+                  width: predictionLabel.implicitWidth + Style.space(12)
+                  height: Style.space(18)
+                  radius: height / 2
+                  color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.2)
+
+                  Text {
+                    id: predictionLabel
+                    anchors.centerIn: parent
+                    text: "AI " + Math.round((root.currentPrediction.confidence || 0) * 100) + "%"
+                    color: Color.accent
                     font.family: root.fontFamily
                     font.pixelSize: Math.max(9, Style.font.caption - 2)
                     font.bold: true
