@@ -46,27 +46,35 @@ real_dir=$(stat -L -c '%d:%i' "$dest" 2>/dev/null) || { echo "error: cannot stat
 link_dir=$(stat -c '%d:%i' "$dest" 2>/dev/null) || { echo "error: cannot stat destination" >&2; exit 1; }
 [[ "$real_dir" == "$link_dir" ]] || { echo "error: category dir is a symlink" >&2; exit 1; }
 
-# Collision-safe destination: "report.pdf" -> "report (1).pdf", ...
-# We are now cd'd into $dest, so all checks use relative paths.
+# Collision-safe destination using atomic no-clobber moves.
+# Instead of checking existence then moving (TOCTOU race), we use
+# mv -n which atomically fails if the target already exists. On
+# failure we generate the next candidate and retry, capping at 100
+# attempts to avoid infinite loops.
 target="$name"
-if [[ -e "$target" || -L "$target" ]]; then
-  if [[ $name == *.* && ${name%.*} != "" ]]; then
+max_attempts=100
+attempt=0
+
+while [[ $attempt -lt $max_attempts ]]; do
+  if mv -n -- "$file" "$target" 2>/dev/null; then
+    # Move succeeded atomically.
+    printf '%s\n' "$dest/$target"
+    omarchy-notification-send -g "" \
+      "Download sorted" \
+      "$(basename "$target") → $category" >/dev/null 2>&1 || true
+    exit 0
+  fi
+  # mv -n failed → target exists (race or pre-existing). Compute next name.
+  attempt=$((attempt + 1))
+  if [[ $attempt -eq 1 && $name == *.* && ${name%.*} != "" ]]; then
     stem="${name%.*}"
     ext=".${name##*.}"
-  else
+  elif [[ $attempt -eq 1 ]]; then
     stem="$name"
     ext=""
   fi
-  n=1
-  while [[ -e "$stem ($n)$ext" || -L "$stem ($n)$ext" ]]; do
-    ((n++))
-  done
-  target="$stem ($n)$ext"
-fi
+  target="$stem ($attempt)$ext"
+done
 
-mv -- "$file" "$target"
-printf '%s\n' "$dest/$target"
-
-omarchy-notification-send -g "" \
-  "Download sorted" \
-  "$(basename "$target") → $category" >/dev/null 2>&1 || true
+echo "error: could not find free target name after $max_attempts attempts" >&2
+exit 1
