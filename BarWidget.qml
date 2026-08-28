@@ -4,6 +4,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "Config.js" as Config
+import "Analytics.js" as Analytics
 
 // Bar widget: download icon -> popup listing category folders.
 // Click a row to open that folder in the file manager; the star column
@@ -17,8 +18,10 @@ Panel {
   readonly property string homeDir: Quickshell.env("HOME")
   readonly property string downloadsDir: homeDir + "/Downloads"
   readonly property string configPath: homeDir + "/.config/downlodarchy/config.json"
+  readonly property string analyticsPath: homeDir + "/.config/downlodarchy/history.json"
 
   property var configData: Config.defaultConfig()
+  property var analyticsData: Analytics.emptyModel()
   property int cursorIndex: 0
   property bool cursorActive: false
 
@@ -26,6 +29,8 @@ Panel {
   readonly property string defaultCategory: configData.defaultCategory || ""
   readonly property string foregroundColor: root.bar ? root.bar.foreground : Color.foreground
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+  readonly property int totalSorts: Analytics.totalCount(root.analyticsData)
+  readonly property string topCategoryName: Analytics.topCategory(root.analyticsData) || "—"
 
   function openFolder(name) {
     Quickshell.execDetached(["xdg-open", root.downloadsDir + "/" + Config.normalizeName(name)])
@@ -64,6 +69,7 @@ Panel {
   onOpenedChanged: {
     if (opened) {
       configFile.reload()
+      analyticsFile.reload()
       cursorActive = false
       var def = String(root.defaultCategory).toLowerCase()
       var idx = 0
@@ -83,6 +89,17 @@ Panel {
     printErrors: false
     onLoaded: root.configData = Config.parseConfig(text())
     onLoadFailed: root.configData = Config.defaultConfig()
+    onFileChanged: reload()
+  }
+
+  FileView {
+    id: analyticsFile
+    path: root.analyticsPath
+    watchChanges: true
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.analyticsData = Analytics.parseModel(text())
+    onLoadFailed: root.analyticsData = Analytics.emptyModel()
     onFileChanged: reload()
   }
 
@@ -243,6 +260,69 @@ Panel {
             }
           }
         }
+
+        PanelSeparator { foreground: root.foregroundColor }
+
+        // ----- stats section
+        PanelSectionHeader {
+          text: "STATS"
+          foreground: root.foregroundColor
+          fontFamily: root.fontFamily
+        }
+
+        Column {
+          width: parent.width
+          spacing: Style.space(4)
+
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+
+            Text {
+              width: parent.width * 0.5
+              text: "Total sorts:"
+              color: root.foregroundColor
+              opacity: 0.6
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Text {
+              width: parent.width * 0.5
+              text: String(root.totalSorts)
+              color: root.foregroundColor
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+
+            Text {
+              width: parent.width * 0.5
+              text: "Top category:"
+              color: root.foregroundColor
+              opacity: 0.6
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Text {
+              width: parent.width * 0.5
+              text: root.topCategoryName
+              color: root.foregroundColor
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              elide: Text.ElideRight
+            }
+          }
+        }
+
+        PanelSeparator { foreground: root.foregroundColor }
 
         Text {
           width: parent.width

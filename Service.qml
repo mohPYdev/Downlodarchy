@@ -5,6 +5,7 @@ import qs.Commons
 import "Config.js" as Config
 import "Classifier.js" as Classifier
 import "Lifecycle.js" as Lifecycle
+import "Analytics.js" as Analytics
 
 // Downlodarchy service: watches ~/Downloads for completed files, asks which
 // category folder each belongs in (Picker overlay below), and moves it there.
@@ -23,10 +24,12 @@ Item {
   readonly property string configPath: configDir + "/config.json"
   readonly property string classifierPath: configDir + "/classifier.json"
   readonly property string lifecyclePath: configDir + "/lifecycle.json"
+  readonly property string analyticsPath: configDir + "/history.json"
 
   property var config: Config.defaultConfig()
   property var classifierModel: Classifier.emptyModel()
   property var lifecycleModel: Lifecycle.emptyModel()
+  property var analyticsModel: Analytics.emptyModel()
   property var queue: []
   property var moveQueue: []
   property var recentPaths: ({})
@@ -122,6 +125,7 @@ Item {
       if (prediction && prediction.confidence >= root.config.classifier.confidenceThreshold) {
         root.sortFile(file, prediction.category)
         root.recordSortDecision(file, prediction.category)
+        root.recordAnalyticsEvent(file, prediction.category, "classifier")
         root.maybeShowNext()
         return
       }
@@ -135,6 +139,7 @@ Item {
   function pickDone(file, category) {
     if (root.currentFile === file) root.currentFile = ""
     root.recordSortDecision(file, category)
+    root.recordAnalyticsEvent(file, category, "manual")
     root.sortFile(file, category)
     root.maybeShowNext()
   }
@@ -328,6 +333,20 @@ Item {
     onFileChanged: reload()
   }
 
+  FileView {
+    id: analyticsFile
+    path: root.analyticsPath
+    watchChanges: true
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.analyticsModel = Analytics.parseModel(text())
+    onLoadFailed: {
+      root.analyticsModel = Analytics.emptyModel()
+      analyticsFile.setText(Analytics.modelToJSON(root.analyticsModel))
+    }
+    onFileChanged: reload()
+  }
+
   function saveConfig() {
     configFile.setText(JSON.stringify(root.config, null, 2) + "\n")
   }
@@ -406,6 +425,35 @@ Item {
     return Lifecycle.lifecycleStats(root.lifecycleModel, root.config.lifecycle)
   }
 
+  // ----------------------------------------------------------- analytics
+
+  function recordAnalyticsEvent(file, category, source) {
+    var name = String(file || "").split("/").pop() || ""
+    var ext = ""
+    var dotIdx = name.lastIndexOf(".")
+    if (dotIdx > 0) ext = name.slice(dotIdx + 1)
+    // Get file size if possible.
+    var size = 0
+    root.analyticsModel = Analytics.recordEvent(root.analyticsModel, {
+      file: name,
+      extension: ext,
+      category: category,
+      size: size,
+      source: source || "manual"
+    })
+    analyticsFile.setText(Analytics.modelToJSON(root.analyticsModel))
+  }
+
+  function getAnalyticsSummary() {
+    return {
+      totalSorts: Analytics.totalCount(root.analyticsModel),
+      topCategory: Analytics.topCategory(root.analyticsModel),
+      topExtensions: Analytics.topExtensions(root.analyticsModel, 5),
+      dailyTrend: Analytics.dailyTrend(root.analyticsModel, 7),
+      sizeStats: Analytics.sizeStats(root.analyticsModel)
+    }
+  }
+
   function addCategory(name, icon) {
     var clean = Config.normalizeName(name)
     if (!clean) return false
@@ -478,6 +526,10 @@ Item {
           deleteAfterDays: root.config.lifecycle.deleteAfterDays,
           scanIntervalMinutes: root.config.lifecycle.scanIntervalMinutes,
           lastScan: root.lifecycleModel.lastScan
+        },
+        analytics: {
+          totalSorts: Analytics.totalCount(root.analyticsModel),
+          topCategory: Analytics.topCategory(root.analyticsModel)
         }
       })
     }
@@ -514,6 +566,40 @@ Item {
     // Report lifecycle statistics.
     function lifecycleStats(): string {
       return JSON.stringify(root.lifecycleStats())
+    }
+
+    // Report analytics summary.
+    function analyticsSummary(): string {
+      return JSON.stringify(root.getAnalyticsSummary())
+    }
+
+    // Get full analytics data.
+    function analyticsData(): string {
+      return JSON.stringify({
+        totalEvents: root.analyticsModel.events.length,
+        recentEvents: Analytics.recentEvents(root.analyticsModel, 20),
+        categoryDistribution: Analytics.categoryDistribution(root.analyticsModel),
+        extensionDistribution: Analytics.extensionDistribution(root.analyticsModel),
+        dailyTrend: Analytics.dailyTrend(root.analyticsModel, 14),
+        weeklyTrend: Analytics.weeklyTrend(root.analyticsModel, 8),
+        monthlyTrend: Analytics.monthlyTrend(root.analyticsModel, 6),
+        sizeStats: Analytics.sizeStats(root.analyticsModel)
+      })
+    }
+
+    // Export analytics as CSV.
+    function exportAnalyticsCSV(): string {
+      return Analytics.exportCSV(root.analyticsModel)
+    }
+
+    // Get events for a specific category.
+    function eventsByCategory(category: string): string {
+      return JSON.stringify(Analytics.eventsByCategory(root.analyticsModel, category, 50))
+    }
+
+    // Get events for a specific date.
+    function eventsByDate(date: string): string {
+      return JSON.stringify(Analytics.eventsByDate(root.analyticsModel, date, 100))
     }
   }
 
