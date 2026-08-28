@@ -264,8 +264,8 @@ Item {
     function organize() {
       sweepProc.command = [
         "bash", "-c",
-        "find \"$1\" -maxdepth 1 -type f -not -name \".*\" ! -name \"*.part\" ! -name \"*.crdownload\" ! -name \"*.tmp\" -print | head -" + root.maxOrganizeEntries + " | sort",
-        "find", root.downloadsDir
+        "find \"$1\" -maxdepth 1 -type f -not -name \".*\" ! -name \"*.part\" ! -name \"*.crdownload\" ! -name \"*.tmp\" -print | head -\"$2\" | sort",
+        "find", root.downloadsDir, String(root.maxOrganizeEntries)
       ]
       sweepProc.running = true
     }
